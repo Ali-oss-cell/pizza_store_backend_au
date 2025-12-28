@@ -6,6 +6,7 @@ from django.core.files.base import ContentFile
 import base64
 import uuid
 from .models import Category, Product, Size, Topping, Tag, IncludedItem, Ingredient, ProductReview
+from .search import search_products as fuzzy_search_products, get_search_suggestions, get_popular_searches
 
 
 # ==================== Helper Functions ====================
@@ -75,9 +76,20 @@ class IngredientType(DjangoObjectType):
 
 class CategoryType(DjangoObjectType):
     """GraphQL type for Category"""
+    products = graphene.List('products.schema.ProductType')
+    product_count = graphene.Int()
+    
     class Meta:
         model = Category
-        fields = ('id', 'name', 'slug', 'description', 'created_at', 'updated_at')
+        fields = ('id', 'name', 'slug', 'description', 'display_order', 'created_at', 'updated_at')
+    
+    def resolve_products(self, info):
+        """Get all available products in this category"""
+        return self.products.filter(is_available=True)
+    
+    def resolve_product_count(self, info):
+        """Get count of available products in this category"""
+        return self.products.filter(is_available=True).count()
 
 
 class SizeType(DjangoObjectType):
@@ -116,6 +128,43 @@ class ProductReviewType(DjangoObjectType):
     def resolve_rating_display(self, info):
         """Return rating as stars"""
         return '★' * self.rating + '☆' * (5 - self.rating)
+
+
+# ==================== Search Types ====================
+
+class SearchSuggestionItemType(graphene.ObjectType):
+    """Single search suggestion item"""
+    type = graphene.String(description="Type of suggestion: 'product', 'category', or 'tag'")
+    id = graphene.ID(description="ID of the suggested item")
+    text = graphene.String(description="Display text for the suggestion")
+    category = graphene.String(description="Category name (for products only)")
+    slug = graphene.String(description="Slug (for categories and tags)")
+    score = graphene.Int(description="Relevance score")
+
+
+class SearchSuggestionsType(graphene.ObjectType):
+    """Search suggestions response with grouped results"""
+    query = graphene.String(description="Original search query")
+    suggestions = graphene.List(SearchSuggestionItemType, description="List of suggestions")
+    products = graphene.List(SearchSuggestionItemType, description="Product suggestions only")
+    categories = graphene.List(SearchSuggestionItemType, description="Category suggestions only")
+    tags = graphene.List(SearchSuggestionItemType, description="Tag suggestions only")
+    total_count = graphene.Int(description="Total number of suggestions")
+
+
+class PopularSearchType(graphene.ObjectType):
+    """Popular search term"""
+    text = graphene.String(description="Search term text")
+    type = graphene.String(description="Type: 'category' or 'tag'")
+    slug = graphene.String(description="Slug for the search term")
+
+
+class SearchResultType(graphene.ObjectType):
+    """Search results with metadata"""
+    query = graphene.String(description="Original search query")
+    results = graphene.List('products.schema.ProductType', description="Matching products")
+    total_count = graphene.Int(description="Total number of results")
+    suggestions = graphene.List(SearchSuggestionItemType, description="Related suggestions")
 
 
 class ProductType(DjangoObjectType):
@@ -295,11 +344,34 @@ class ProductsQuery(graphene.ObjectType):
         description="Get products filtered by tag"
     )
     
-    # Search products
+    # Search products (basic)
     search_products = graphene.List(
         ProductType,
         search=graphene.String(required=True),
-        description="Search products by name or description"
+        description="Search products by name or description (basic search)"
+    )
+    
+    # Fuzzy search products (advanced)
+    fuzzy_search = graphene.List(
+        ProductType,
+        query=graphene.String(required=True),
+        limit=graphene.Int(default_value=20),
+        include_unavailable=graphene.Boolean(default_value=False),
+        description="Advanced fuzzy search for products with relevance scoring"
+    )
+    
+    # Search suggestions/autocomplete
+    search_suggestions = graphene.Field(
+        'products.schema.SearchSuggestionsType',
+        query=graphene.String(required=True),
+        limit=graphene.Int(default_value=10),
+        description="Get search suggestions for autocomplete"
+    )
+    
+    # Popular searches
+    popular_searches = graphene.List(
+        'products.schema.PopularSearchType',
+        description="Get popular/trending search terms"
     )
     
     # Available products only
@@ -454,11 +526,38 @@ class ProductsQuery(graphene.ObjectType):
         return Product.objects.filter(**filters)
     
     def resolve_search_products(self, info, search):
-        """Search products by name or description"""
+        """Search products by name or description (basic search)"""
         return Product.objects.filter(
             Q(name__icontains=search) | Q(description__icontains=search),
             is_available=True
         ).distinct()
+    
+    def resolve_fuzzy_search(self, info, query, limit=20, include_unavailable=False):
+        """Advanced fuzzy search with relevance scoring"""
+        return fuzzy_search_products(query, limit=limit, include_unavailable=include_unavailable)
+    
+    def resolve_search_suggestions(self, info, query, limit=10):
+        """Get search suggestions for autocomplete"""
+        suggestions = get_search_suggestions(query, limit=limit)
+        
+        # Group suggestions by type
+        products = [s for s in suggestions if s['type'] == 'product']
+        categories = [s for s in suggestions if s['type'] == 'category']
+        tags = [s for s in suggestions if s['type'] == 'tag']
+        
+        return SearchSuggestionsType(
+            query=query,
+            suggestions=[SearchSuggestionItemType(**s) for s in suggestions],
+            products=[SearchSuggestionItemType(**s) for s in products],
+            categories=[SearchSuggestionItemType(**s) for s in categories],
+            tags=[SearchSuggestionItemType(**s) for s in tags],
+            total_count=len(suggestions)
+        )
+    
+    def resolve_popular_searches(self, info):
+        """Get popular/trending search terms"""
+        popular = get_popular_searches()
+        return [PopularSearchType(**p) for p in popular]
     
     def resolve_available_products(self, info):
         """Get only available products"""

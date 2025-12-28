@@ -127,6 +127,14 @@ class OrdersQuery(graphene.ObjectType):
         description="Get order statistics (staff/admin only)"
     )
     
+    # Order search
+    search_orders = graphene.List(
+        OrderType,
+        query=graphene.String(required=True),
+        limit=graphene.Int(default_value=20),
+        description="Search orders by order number, customer name, email, or phone (staff/admin only)"
+    )
+    
     def resolve_order(self, info, order_number=None, order_id=None):
         """Get order by order number or ID"""
         if order_number:
@@ -180,6 +188,19 @@ class OrdersQuery(graphene.ObjectType):
             raise GraphQLError("You don't have permission to view orders")
         
         return Order.objects.all()[:limit]
+    
+    def resolve_search_orders(self, info, query, limit=20):
+        """Search orders by order number, customer name, email, or phone"""
+        user = info.context.user
+        
+        if not user.is_authenticated:
+            raise GraphQLError("Authentication required")
+        
+        if not user.has_order_permission():
+            raise GraphQLError("You don't have permission to search orders")
+        
+        from products.search import search_orders as fuzzy_search_orders
+        return fuzzy_search_orders(query, limit=limit)
     
     def resolve_order_stats(self, info):
         """Get order statistics"""
