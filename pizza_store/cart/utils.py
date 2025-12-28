@@ -47,8 +47,8 @@ def calculate_item_price(product, size=None, toppings=None):
         toppings: List of topping dicts with 'id' and 'price' keys (optional)
     Returns: Decimal price
     """
-    # Start with base price
-    price = product.base_price
+    # Start with current base price (sale price if on sale, otherwise regular price)
+    price = product.get_current_base_price()
     
     # Add size modifier if size is provided
     if size:

@@ -74,7 +74,7 @@ class ProductReviewInline(admin.TabularInline):
 @admin.register(Product)
 class ProductAdmin(admin.ModelAdmin):
     list_display = [
-        'name', 'category', 'base_price', 'rating_display', 
+        'name', 'category', 'price_display', 'sale_badge', 'rating_display', 
         'prep_time', 'is_available', 'is_featured', 'created_at'
     ]
     list_filter = ['category', 'tags', 'is_available', 'is_featured', 'is_combo']
@@ -89,7 +89,7 @@ class ProductAdmin(admin.ModelAdmin):
             'fields': ('name', 'short_description', 'description', 'category', 'tags', 'image')
         }),
         ('Pricing', {
-            'fields': ('base_price', 'available_sizes')
+            'fields': ('base_price', 'sale_price', 'sale_start_date', 'sale_end_date', 'available_sizes')
         }),
         ('Ingredients & Details', {
             'fields': ('ingredients', 'prep_time_min', 'prep_time_max', 'calories')
@@ -119,6 +119,27 @@ class ProductAdmin(admin.ModelAdmin):
     def prep_time(self, obj):
         return f"{obj.prep_time_min}-{obj.prep_time_max} min"
     prep_time.short_description = 'Prep Time'
+    
+    def price_display(self, obj):
+        """Show current price with sale indicator"""
+        if obj.is_on_sale:
+            return format_html(
+                '<span style="text-decoration: line-through; color: #95a5a6;">${}</span> '
+                '<span style="color: #e74c3c; font-weight: bold;">${}</span>',
+                obj.base_price, obj.sale_price
+            )
+        return f"${obj.base_price}"
+    price_display.short_description = 'Price'
+    
+    def sale_badge(self, obj):
+        """Show sale status badge"""
+        if obj.is_on_sale:
+            return format_html(
+                '<span style="background-color: #e74c3c; color: white; padding: 3px 8px; '
+                'border-radius: 3px; font-size: 11px; font-weight: bold;">SALE</span>'
+            )
+        return format_html('<span style="color: #95a5a6;">—</span>')
+    sale_badge.short_description = 'Sale'
 
 
 @admin.register(ProductReview)

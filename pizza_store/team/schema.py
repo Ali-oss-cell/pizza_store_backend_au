@@ -27,13 +27,16 @@ class PromotionType(DjangoObjectType):
     """GraphQL type for Promotion"""
     is_valid = graphene.Boolean()
     discount_display = graphene.String()
+    applicable_products = graphene.List('products.schema.ProductType')
     
     class Meta:
         model = Promotion
         fields = (
             'id', 'code', 'name', 'description', 'discount_type',
             'discount_value', 'minimum_order_amount', 'maximum_discount',
-            'usage_limit', 'times_used', 'is_active', 'valid_from', 'valid_until'
+            'usage_limit', 'times_used', 'is_active', 'valid_from', 'valid_until',
+            'applicable_products', 'apply_to_base_price', 'apply_to_toppings',
+            'apply_to_included_items', 'apply_to_entire_order'
         )
     
     def resolve_is_valid(self, info):
@@ -46,6 +49,9 @@ class PromotionType(DjangoObjectType):
             return f"${self.discount_value} off"
         else:
             return "Free Delivery"
+    
+    def resolve_applicable_products(self, info):
+        return self.applicable_products.all()
 
 
 class PromotionValidationResult(graphene.ObjectType):
@@ -87,9 +93,15 @@ class PromotionInput(graphene.InputObjectType):
     minimum_order_amount = graphene.Decimal()
     maximum_discount = graphene.Decimal()
     usage_limit = graphene.Int()
-    is_active = graphene.Boolean()
+    is_active = graphene.Boolean(required=True)
     valid_from = graphene.DateTime(required=True)
     valid_until = graphene.DateTime(required=True)
+    # Product-specific fields
+    applicable_product_ids = graphene.List(graphene.ID, description="Product IDs this promotion applies to. Empty = all products")
+    apply_to_base_price = graphene.Boolean(description="Apply discount to product base price")
+    apply_to_toppings = graphene.Boolean(description="Apply discount to toppings/add-ons")
+    apply_to_included_items = graphene.Boolean(description="Apply discount to included items (e.g., chips, salad)")
+    apply_to_entire_order = graphene.Boolean(description="If True, applies to entire order. If False, only selected products.")
 
 
 # ==================== Queries ====================
@@ -185,8 +197,8 @@ class TeamQuery(graphene.ObjectType):
         if not user.is_authenticated:
             raise GraphQLError("Authentication required")
         
-        if not (user.is_admin or user.is_staff_member):
-            raise GraphQLError("Only staff can view all promotions")
+        if not user.has_promotion_permission():
+            raise GraphQLError("You don't have permission to view promotions")
         
         queryset = Promotion.objects.all()
         
@@ -207,8 +219,8 @@ class TeamQuery(graphene.ObjectType):
         if not user.is_authenticated:
             raise GraphQLError("Authentication required")
         
-        if not (user.is_admin or user.is_staff_member):
-            raise GraphQLError("Only staff can view promotion details")
+        if not user.has_promotion_permission():
+            raise GraphQLError("You don't have permission to view promotion details")
         
         if id:
             try:
@@ -272,8 +284,8 @@ class CreatePromotion(graphene.Mutation):
     def mutate(root, info, input):
         user = info.context.user
         
-        if not user.is_authenticated or not user.is_admin:
-            raise GraphQLError("Only admins can create promotions")
+        if not user.is_authenticated or not user.has_promotion_permission():
+            raise GraphQLError("You don't have permission to create promotions")
         
         # Check if code already exists
         if Promotion.objects.filter(code__iexact=input.get('code')).exists():
@@ -283,6 +295,8 @@ class CreatePromotion(graphene.Mutation):
         valid_types = ['percentage', 'fixed', 'free_delivery']
         if input.get('discount_type') not in valid_types:
             raise GraphQLError(f"Invalid discount type. Must be one of: {', '.join(valid_types)}")
+        
+        from products.models import Product
         
         promotion = Promotion.objects.create(
             code=input.get('code').upper(),
@@ -295,8 +309,18 @@ class CreatePromotion(graphene.Mutation):
             usage_limit=input.get('usage_limit'),
             is_active=input.get('is_active', True),
             valid_from=input.get('valid_from'),
-            valid_until=input.get('valid_until')
+            valid_until=input.get('valid_until'),
+            apply_to_base_price=input.get('apply_to_base_price', True),
+            apply_to_toppings=input.get('apply_to_toppings', False),
+            apply_to_included_items=input.get('apply_to_included_items', False),
+            apply_to_entire_order=input.get('apply_to_entire_order', True)
         )
+        
+        # Set applicable products
+        product_ids = input.get('applicable_product_ids', [])
+        if product_ids:
+            products = Product.objects.filter(pk__in=product_ids)
+            promotion.applicable_products.set(products)
         
         return CreatePromotion(
             promotion=promotion,
@@ -319,13 +343,18 @@ class UpdatePromotion(graphene.Mutation):
     def mutate(root, info, id, input):
         user = info.context.user
         
-        if not user.is_authenticated or not user.is_admin:
-            raise GraphQLError("Only admins can update promotions")
+        if not user.is_authenticated or not user.has_promotion_permission():
+            raise GraphQLError("You don't have permission to update promotions")
         
         try:
             promotion = Promotion.objects.get(pk=id)
         except Promotion.DoesNotExist:
             raise GraphQLError("Promotion not found")
+        
+        from products.models import Product
+        
+        # Handle product IDs separately (ManyToMany)
+        product_ids = input.pop('applicable_product_ids', None)
         
         # Update fields
         for field, value in input.items():
@@ -335,6 +364,15 @@ class UpdatePromotion(graphene.Mutation):
                 setattr(promotion, field, value)
         
         promotion.save()
+        
+        # Update applicable products if provided
+        if product_ids is not None:
+            if product_ids:
+                products = Product.objects.filter(pk__in=product_ids)
+                promotion.applicable_products.set(products)
+            else:
+                # Empty list means clear all products (apply to all)
+                promotion.applicable_products.clear()
         
         return UpdatePromotion(
             promotion=promotion,
@@ -355,8 +393,8 @@ class DeletePromotion(graphene.Mutation):
     def mutate(root, info, id):
         user = info.context.user
         
-        if not user.is_authenticated or not user.is_admin:
-            raise GraphQLError("Only admins can delete promotions")
+        if not user.is_authenticated or not user.has_promotion_permission():
+            raise GraphQLError("You don't have permission to delete promotions")
         
         try:
             promotion = Promotion.objects.get(pk=id)

@@ -94,6 +94,30 @@ class Promotion(models.Model):
         help_text="Percentage (e.g., 10 for 10%) or fixed amount"
     )
     
+    # Product-Specific Discount Settings
+    applicable_products = models.ManyToManyField(
+        'products.Product',
+        blank=True,
+        related_name='promotions',
+        help_text="Specific products this promotion applies to. Leave empty to apply to all products."
+    )
+    apply_to_base_price = models.BooleanField(
+        default=True,
+        help_text="Apply discount to product base price"
+    )
+    apply_to_toppings = models.BooleanField(
+        default=False,
+        help_text="Apply discount to toppings/add-ons"
+    )
+    apply_to_included_items = models.BooleanField(
+        default=False,
+        help_text="Apply discount to included items (e.g., chips, salad in combos)"
+    )
+    apply_to_entire_order = models.BooleanField(
+        default=True,
+        help_text="If True, applies to entire order. If False, only applies to selected products."
+    )
+    
     # Conditions
     minimum_order_amount = models.DecimalField(
         max_digits=10, decimal_places=2,
@@ -142,8 +166,18 @@ class Promotion(models.Model):
             return False
         return True
     
-    def calculate_discount(self, order_subtotal, delivery_fee=Decimal('0.00')):
-        """Calculate the discount amount for an order"""
+    def calculate_discount(self, order_subtotal, delivery_fee=Decimal('0.00'), order_items=None):
+        """
+        Calculate the discount amount for an order.
+        
+        Args:
+            order_subtotal: Total order subtotal
+            delivery_fee: Delivery fee amount
+            order_items: List of OrderItem objects (optional, for product-specific discounts)
+        
+        Returns:
+            Decimal: Discount amount
+        """
         if not self.is_valid:
             return Decimal('0.00')
         
@@ -151,16 +185,54 @@ class Promotion(models.Model):
         if self.minimum_order_amount and order_subtotal < self.minimum_order_amount:
             return Decimal('0.00')
         
+        # Free delivery discount
+        if self.discount_type == self.DiscountType.FREE_DELIVERY:
+            return delivery_fee
+        
+        # Product-specific discount calculation
+        if order_items and not self.apply_to_entire_order:
+            # Only apply to selected products
+            applicable_product_ids = set(self.applicable_products.values_list('id', flat=True))
+            if not applicable_product_ids:
+                # If no products selected, apply to all (fallback)
+                discountable_amount = order_subtotal
+            else:
+                # Calculate discount only on applicable products
+                discountable_amount = Decimal('0.00')
+                for item in order_items:
+                    if item.product_id in applicable_product_ids:
+                        item_discountable = Decimal('0.00')
+                        
+                        # Base price
+                        if self.apply_to_base_price:
+                            # Use unit_price per item (already includes size modifier)
+                            base_price = item.unit_price
+                            item_discountable += base_price * item.quantity
+                        
+                        # Toppings
+                        if self.apply_to_toppings and item.selected_toppings:
+                            for topping in item.selected_toppings:
+                                if isinstance(topping, dict) and 'price' in topping:
+                                    item_discountable += Decimal(str(topping['price'])) * item.quantity
+                        
+                        # Included items (for combos)
+                        if self.apply_to_included_items and item.is_combo:
+                            # Included items are typically free, but if they have prices, add here
+                            pass
+                        
+                        discountable_amount += item_discountable
+        else:
+            # Apply to entire order
+            discountable_amount = order_subtotal
+        
+        # Calculate discount based on type
         if self.discount_type == self.DiscountType.PERCENTAGE:
-            discount = order_subtotal * (self.discount_value / Decimal('100'))
+            discount = discountable_amount * (self.discount_value / Decimal('100'))
             if self.maximum_discount:
                 discount = min(discount, self.maximum_discount)
             return discount
         
         elif self.discount_type == self.DiscountType.FIXED:
-            return min(self.discount_value, order_subtotal)
-        
-        elif self.discount_type == self.DiscountType.FREE_DELIVERY:
-            return delivery_fee
+            return min(self.discount_value, discountable_amount)
         
         return Decimal('0.00')

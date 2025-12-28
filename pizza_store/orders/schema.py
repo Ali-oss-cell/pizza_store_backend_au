@@ -151,8 +151,8 @@ class OrdersQuery(graphene.ObjectType):
         if not user.is_authenticated:
             raise GraphQLError("Authentication required")
         
-        if not (user.is_admin or user.is_staff_member):
-            raise GraphQLError("Only staff and admins can view all orders")
+        if not user.has_order_permission():
+            raise GraphQLError("You don't have permission to view orders")
         
         queryset = Order.objects.all()
         
@@ -176,8 +176,8 @@ class OrdersQuery(graphene.ObjectType):
         if not user.is_authenticated:
             raise GraphQLError("Authentication required")
         
-        if not (user.is_admin or user.is_staff_member):
-            raise GraphQLError("Only staff and admins can view orders")
+        if not user.has_order_permission():
+            raise GraphQLError("You don't have permission to view orders")
         
         return Order.objects.all()[:limit]
     
@@ -188,8 +188,8 @@ class OrdersQuery(graphene.ObjectType):
         if not user.is_authenticated:
             raise GraphQLError("Authentication required")
         
-        if not (user.is_admin or user.is_staff_member):
-            raise GraphQLError("Only staff and admins can view statistics")
+        if not user.has_report_permission():
+            raise GraphQLError("You don't have permission to view statistics")
         
         from django.db.models import Sum, Count
         from django.utils import timezone
@@ -263,39 +263,13 @@ class CreateOrder(graphene.Mutation):
         if order_type == 'pickup':
             delivery_fee = Decimal('0.00')
         
-        # Apply promotion code if provided
-        discount_amount = Decimal('0.00')
-        discount_code = None
-        promotion_code = input.get('promotion_code')
-        
-        if promotion_code:
-            from team.models import Promotion
-            try:
-                promotion = Promotion.objects.get(code__iexact=promotion_code)
-                if promotion.is_valid:
-                    if promotion.minimum_order_amount and subtotal < promotion.minimum_order_amount:
-                        raise GraphQLError(f"Minimum order amount for this code is ${promotion.minimum_order_amount}")
-                    
-                    discount_amount = promotion.calculate_discount(subtotal, delivery_fee)
-                    discount_code = promotion.code
-                    
-                    # Increment usage count
-                    promotion.times_used += 1
-                    promotion.save()
-                else:
-                    raise GraphQLError("This promotion code is no longer valid")
-            except Promotion.DoesNotExist:
-                raise GraphQLError("Invalid promotion code")
-        
-        total = subtotal + delivery_fee - discount_amount
-        
         # Generate unique order number
         order_number = generate_order_number()
         # Ensure uniqueness
         while Order.objects.filter(order_number=order_number).exists():
             order_number = generate_order_number()
         
-        # Create order
+        # Create order first (we'll update discount after calculating with order items)
         order = Order.objects.create(
             order_number=order_number,
             customer_name=input.get('customer_name'),
@@ -307,14 +281,15 @@ class CreateOrder(graphene.Mutation):
             delivery_instructions=input.get('delivery_instructions', ''),
             subtotal=subtotal,
             delivery_fee=delivery_fee,
-            discount_amount=discount_amount,
-            discount_code=discount_code,
-            total=total,
+            discount_amount=Decimal('0.00'),
+            discount_code=None,
+            total=subtotal + delivery_fee,
             cart_session_key=cart.session_key,
             status=Order.Status.PENDING
         )
         
         # Create order items from cart items
+        order_items = []
         for cart_item in cart_items:
             # Calculate item subtotal (including toppings)
             from decimal import Decimal as D
@@ -326,7 +301,7 @@ class CreateOrder(graphene.Mutation):
             # Get included item names for snapshot
             included_names = [item.name for item in cart_item.product.included_items.all()]
             
-            OrderItem.objects.create(
+            order_item = OrderItem.objects.create(
                 order=order,
                 product_name=cart_item.product.name,
                 product_id=cart_item.product.id,
@@ -339,6 +314,45 @@ class CreateOrder(graphene.Mutation):
                 quantity=cart_item.quantity,
                 subtotal=item_subtotal
             )
+            order_items.append(order_item)
+        
+        # Apply promotion code if provided (now with order items for product-specific discounts)
+        discount_amount = Decimal('0.00')
+        discount_code = None
+        promotion_code = input.get('promotion_code')
+        
+        if promotion_code:
+            from team.models import Promotion
+            try:
+                promotion = Promotion.objects.get(code__iexact=promotion_code)
+                if promotion.is_valid:
+                    if promotion.minimum_order_amount and subtotal < promotion.minimum_order_amount:
+                        # Delete order and items if validation fails
+                        order.delete()
+                        raise GraphQLError(f"Minimum order amount for this code is ${promotion.minimum_order_amount}")
+                    
+                    # Calculate discount with order items for product-specific discounts
+                    discount_amount = promotion.calculate_discount(subtotal, delivery_fee, order_items)
+                    discount_code = promotion.code
+                    
+                    # Increment usage count
+                    promotion.times_used += 1
+                    promotion.save()
+                else:
+                    # Delete order and items if validation fails
+                    order.delete()
+                    raise GraphQLError("This promotion code is no longer valid")
+            except Promotion.DoesNotExist:
+                # Delete order and items if validation fails
+                order.delete()
+                raise GraphQLError("Invalid promotion code")
+        
+        # Update order with discount
+        total = subtotal + delivery_fee - discount_amount
+        order.discount_amount = discount_amount
+        order.discount_code = discount_code
+        order.total = total
+        order.save()
         
         # Clear cart after order creation
         cart.items.all().delete()
@@ -367,8 +381,8 @@ class UpdateOrderStatus(graphene.Mutation):
         if not user.is_authenticated:
             raise GraphQLError("Authentication required")
         
-        if not (user.is_admin or user.is_staff_member):
-            raise GraphQLError("Only staff and admins can update order status")
+        if not user.has_order_permission():
+            raise GraphQLError("You don't have permission to update order status")
         
         # Get order
         try:

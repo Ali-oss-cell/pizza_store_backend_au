@@ -59,6 +59,13 @@ class PromotionAdmin(admin.ModelAdmin):
         ('Discount Details', {
             'fields': ('discount_type', 'discount_value', 'maximum_discount')
         }),
+        ('Product Selection', {
+            'fields': (
+                'applicable_products', 'apply_to_entire_order',
+                'apply_to_base_price', 'apply_to_toppings', 'apply_to_included_items'
+            ),
+            'description': 'Select specific products or leave empty to apply to all products. Choose what parts of the product to discount.'
+        }),
         ('Conditions', {
             'fields': ('minimum_order_amount',)
         }),
@@ -73,6 +80,7 @@ class PromotionAdmin(admin.ModelAdmin):
             'classes': ('collapse',)
         }),
     )
+    filter_horizontal = ['applicable_products']
     
     def discount_display(self, obj):
         """Display discount with type"""

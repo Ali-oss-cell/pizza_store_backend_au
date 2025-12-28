@@ -100,6 +100,25 @@ class Product(models.Model):
         validators=[MinValueValidator(0)],
         help_text="Base price (smallest size)"
     )
+    # Sale pricing
+    sale_price = models.DecimalField(
+        max_digits=10,
+        decimal_places=2,
+        null=True,
+        blank=True,
+        validators=[MinValueValidator(0)],
+        help_text="Sale price (applies to all users when active)"
+    )
+    sale_start_date = models.DateTimeField(
+        null=True,
+        blank=True,
+        help_text="When the sale starts (leave empty to start immediately)"
+    )
+    sale_end_date = models.DateTimeField(
+        null=True,
+        blank=True,
+        help_text="When the sale ends (leave empty for no end date)"
+    )
     category = models.ForeignKey(
         Category, 
         on_delete=models.CASCADE,
@@ -168,11 +187,47 @@ class Product(models.Model):
         """Return formatted prep time string"""
         return f"{self.prep_time_min}-{self.prep_time_max} min"
     
-    def get_price_for_size(self, size):
-        """Calculate price for a specific size"""
-        if size in self.available_sizes.all():
-            return self.base_price + size.price_modifier
+    @property
+    def is_on_sale(self):
+        """Check if product is currently on sale"""
+        if not self.sale_price:
+            return False
+        
+        from django.utils import timezone
+        now = timezone.now()
+        
+        # Check if sale has started
+        if self.sale_start_date and now < self.sale_start_date:
+            return False
+        
+        # Check if sale has ended
+        if self.sale_end_date and now > self.sale_end_date:
+            return False
+        
+        return True
+    
+    def get_current_base_price(self):
+        """Get current base price (sale price if on sale, otherwise regular price)"""
+        if self.is_on_sale:
+            return self.sale_price
         return self.base_price
+    
+    def get_price_for_size(self, size):
+        """Calculate price for a specific size (uses sale price if on sale)"""
+        base_price = self.get_current_base_price()
+        if size in self.available_sizes.all():
+            return base_price + size.price_modifier
+        return base_price
+    
+    @property
+    def discount_percentage(self):
+        """Calculate discount percentage when on sale"""
+        if not self.is_on_sale or not self.sale_price:
+            return 0
+        if self.base_price == 0:
+            return 0
+        discount = self.base_price - self.sale_price
+        return round((discount / self.base_price) * 100, 0)
     
     def update_rating(self):
         """Recalculate average rating from reviews"""
@@ -199,6 +254,7 @@ class ProductReview(models.Model):
     comment = models.TextField(blank=True)
     is_approved = models.BooleanField(default=False, help_text="Approved by admin to display")
     created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
     
     class Meta:
         ordering = ['-created_at']

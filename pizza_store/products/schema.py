@@ -102,9 +102,20 @@ class ToppingType(DjangoObjectType):
 
 class ProductReviewType(DjangoObjectType):
     """GraphQL type for ProductReview"""
+    product = graphene.Field('products.schema.ProductType')
+    rating_display = graphene.String()
+    
     class Meta:
         model = ProductReview
-        fields = ('id', 'customer_name', 'rating', 'comment', 'created_at')
+        fields = ('id', 'customer_name', 'customer_email', 'rating', 'comment', 'is_approved', 'created_at', 'updated_at')
+    
+    def resolve_product(self, info):
+        """Return the product for this review"""
+        return self.product
+    
+    def resolve_rating_display(self, info):
+        """Return rating as stars"""
+        return '★' * self.rating + '☆' * (5 - self.rating)
 
 
 class ProductType(DjangoObjectType):
@@ -118,17 +129,33 @@ class ProductType(DjangoObjectType):
     available_toppings = graphene.List(ToppingType)
     reviews = graphene.List(ProductReviewType)
     prep_time_display = graphene.String()
+    is_on_sale = graphene.Boolean()
+    current_price = graphene.Decimal(description="Current price (sale price if on sale, otherwise base price)")
+    discount_percentage = graphene.Int(description="Discount percentage when on sale")
     
     class Meta:
         model = Product
         fields = (
             'id', 'name', 'short_description', 'description', 'base_price', 
+            'sale_price', 'sale_start_date', 'sale_end_date',
             'category', 'tags', 'image', 'is_available', 'is_featured',
             'is_combo', 'included_items', 'ingredients',
             'prep_time_min', 'prep_time_max', 'average_rating', 'rating_count',
             'calories', 'available_sizes', 'available_toppings',
             'created_at', 'updated_at'
         )
+    
+    def resolve_is_on_sale(self, info):
+        """Check if product is currently on sale"""
+        return self.is_on_sale
+    
+    def resolve_current_price(self, info):
+        """Get current price (sale price if on sale, otherwise base price)"""
+        return self.get_current_base_price()
+    
+    def resolve_discount_percentage(self, info):
+        """Get discount percentage when on sale"""
+        return int(self.discount_percentage)
     
     def resolve_image_url(self, info):
         """Return full URL for product image"""
@@ -226,6 +253,10 @@ class ProductInput(graphene.InputObjectType):
     prep_time_max = graphene.Int()
     calories = graphene.Int()
     image = graphene.String(description="Base64 encoded image data (data:image/png;base64,...)")
+    # Sale pricing
+    sale_price = graphene.Decimal(description="Sale price (applies to all users when active)")
+    sale_start_date = graphene.DateTime(description="When the sale starts (leave empty to start immediately)")
+    sale_end_date = graphene.DateTime(description="When the sale ends (leave empty for no end date)")
 
 
 # ==================== Queries ====================
@@ -364,7 +395,28 @@ class ProductsQuery(graphene.ObjectType):
     product_reviews = graphene.List(
         ProductReviewType,
         product_id=graphene.ID(required=True),
+        approved_only=graphene.Boolean(default_value=True),
         description="Get reviews for a product"
+    )
+    
+    # Review management queries (admin/staff only)
+    all_reviews = graphene.List(
+        ProductReviewType,
+        approved_only=graphene.Boolean(),
+        product_id=graphene.ID(),
+        rating=graphene.Int(),
+        description="Get all reviews (admin/staff only)"
+    )
+    
+    pending_reviews = graphene.List(
+        ProductReviewType,
+        description="Get pending reviews awaiting approval (admin/staff only)"
+    )
+    
+    review = graphene.Field(
+        ProductReviewType,
+        id=graphene.ID(required=True),
+        description="Get a single review by ID (admin/staff only)"
     )
     
     # Resolvers
@@ -487,9 +539,50 @@ class ProductsQuery(graphene.ObjectType):
             rating_count__gt=0
         ).order_by('-average_rating')[:limit]
     
-    def resolve_product_reviews(self, info, product_id):
+    def resolve_product_reviews(self, info, product_id, approved_only=True):
         """Get reviews for a product"""
-        return ProductReview.objects.filter(product_id=product_id, is_approved=True)
+        queryset = ProductReview.objects.filter(product_id=product_id)
+        if approved_only:
+            queryset = queryset.filter(is_approved=True)
+        return queryset.order_by('-created_at')
+    
+    def resolve_all_reviews(self, info, approved_only=None, product_id=None, rating=None):
+        """Get all reviews (admin/staff only)"""
+        user = info.context.user
+        if not user.is_authenticated or not user.has_review_permission():
+            raise GraphQLError("You don't have permission to view all reviews")
+        
+        queryset = ProductReview.objects.all()
+        
+        if approved_only is not None:
+            queryset = queryset.filter(is_approved=approved_only)
+        
+        if product_id:
+            queryset = queryset.filter(product_id=product_id)
+        
+        if rating:
+            queryset = queryset.filter(rating=rating)
+        
+        return queryset.order_by('-created_at')
+    
+    def resolve_pending_reviews(self, info):
+        """Get pending reviews awaiting approval (admin/staff only)"""
+        user = info.context.user
+        if not user.is_authenticated or not user.has_review_permission():
+            raise GraphQLError("You don't have permission to view pending reviews")
+        
+        return ProductReview.objects.filter(is_approved=False).order_by('-created_at')
+    
+    def resolve_review(self, info, id):
+        """Get a single review by ID (admin/staff only)"""
+        user = info.context.user
+        if not user.is_authenticated or not user.has_review_permission():
+            raise GraphQLError("You don't have permission to view review details")
+        
+        try:
+            return ProductReview.objects.get(pk=id)
+        except ProductReview.DoesNotExist:
+            return None
 
 
 # ==================== Mutations ====================
@@ -509,8 +602,8 @@ class CreateCategory(graphene.Mutation):
         
         # Check if user is admin
         user = info.context.user
-        if not user.is_authenticated or not user.is_admin:
-            raise GraphQLError("Only admins can create categories")
+        if not user.is_authenticated or not user.has_category_permission():
+            raise GraphQLError("You don't have permission to create categories")
         
         name = input.get('name')
         slug = input.get('slug') or slugify(name)
@@ -542,8 +635,8 @@ class UpdateCategory(graphene.Mutation):
         from django.utils.text import slugify
         
         user = info.context.user
-        if not user.is_authenticated or not user.is_admin:
-            raise GraphQLError("Only admins can update categories")
+        if not user.is_authenticated or not user.has_category_permission():
+            raise GraphQLError("You don't have permission to update categories")
         
         try:
             category = Category.objects.get(pk=id)
@@ -572,8 +665,8 @@ class DeleteCategory(graphene.Mutation):
     @staticmethod
     def mutate(root, info, id):
         user = info.context.user
-        if not user.is_authenticated or not user.is_admin:
-            raise GraphQLError("Only admins can delete categories")
+        if not user.is_authenticated or not user.has_category_permission():
+            raise GraphQLError("You don't have permission to delete categories")
         
         try:
             category = Category.objects.get(pk=id)
@@ -595,8 +688,8 @@ class CreateTag(graphene.Mutation):
     @staticmethod
     def mutate(root, info, input):
         user = info.context.user
-        if not user.is_authenticated or not user.is_admin:
-            raise GraphQLError("Only admins can create tags")
+        if not user.is_authenticated or not user.has_product_permission():
+            raise GraphQLError("You don't have permission to create tags")
         
         tag = Tag.objects.create(
             name=input.get('name'),
@@ -619,8 +712,8 @@ class UpdateTag(graphene.Mutation):
     @staticmethod
     def mutate(root, info, id, input):
         user = info.context.user
-        if not user.is_authenticated or not user.is_admin:
-            raise GraphQLError("Only admins can update tags")
+        if not user.is_authenticated or not user.has_product_permission():
+            raise GraphQLError("You don't have permission to update tags")
         
         try:
             tag = Tag.objects.get(pk=id)
@@ -644,8 +737,8 @@ class DeleteTag(graphene.Mutation):
     @staticmethod
     def mutate(root, info, id):
         user = info.context.user
-        if not user.is_authenticated or not user.is_admin:
-            raise GraphQLError("Only admins can delete tags")
+        if not user.is_authenticated or not user.has_product_permission():
+            raise GraphQLError("You don't have permission to delete tags")
         
         try:
             tag = Tag.objects.get(pk=id)
@@ -667,8 +760,8 @@ class CreateProduct(graphene.Mutation):
     @staticmethod
     def mutate(root, info, input):
         user = info.context.user
-        if not user.is_authenticated or not user.is_admin:
-            raise GraphQLError("Only admins can create products")
+        if not user.is_authenticated or not user.has_product_permission():
+            raise GraphQLError("You don't have permission to create products")
         
         try:
             category = Category.objects.get(pk=input.get('category_id'))
@@ -683,7 +776,10 @@ class CreateProduct(graphene.Mutation):
                 is_combo=input.get('is_combo', False),
                 prep_time_min=input.get('prep_time_min', 15),
                 prep_time_max=input.get('prep_time_max', 20),
-                calories=input.get('calories')
+                calories=input.get('calories'),
+                sale_price=input.get('sale_price'),
+                sale_start_date=input.get('sale_start_date'),
+                sale_end_date=input.get('sale_end_date')
             )
             
             # Handle image upload if provided
@@ -734,8 +830,8 @@ class UpdateProduct(graphene.Mutation):
     @staticmethod
     def mutate(root, info, id, input):
         user = info.context.user
-        if not user.is_authenticated or not user.is_admin:
-            raise GraphQLError("Only admins can update products")
+        if not user.is_authenticated or not user.has_product_permission():
+            raise GraphQLError("You don't have permission to update products")
         
         try:
             product = Product.objects.get(pk=id)
@@ -764,6 +860,14 @@ class UpdateProduct(graphene.Mutation):
             if input.get('category_id'):
                 category = Category.objects.get(pk=input.get('category_id'))
                 product.category = category
+            
+            # Handle sale pricing
+            if input.get('sale_price') is not None:
+                product.sale_price = input.get('sale_price')
+            if input.get('sale_start_date') is not None:
+                product.sale_start_date = input.get('sale_start_date')
+            if input.get('sale_end_date') is not None:
+                product.sale_end_date = input.get('sale_end_date')
             
             # Handle image upload if provided
             if input.get('image'):
@@ -814,8 +918,8 @@ class DeleteProduct(graphene.Mutation):
     @staticmethod
     def mutate(root, info, id):
         user = info.context.user
-        if not user.is_authenticated or not user.is_admin:
-            raise GraphQLError("Only admins can delete products")
+        if not user.is_authenticated or not user.has_product_permission():
+            raise GraphQLError("You don't have permission to delete products")
         
         try:
             product = Product.objects.get(pk=id)
@@ -839,8 +943,8 @@ class CreateSize(graphene.Mutation):
     @staticmethod
     def mutate(root, info, input):
         user = info.context.user
-        if not user.is_authenticated or not user.is_admin:
-            raise GraphQLError("Only admins can create sizes")
+        if not user.is_authenticated or not user.has_product_permission():
+            raise GraphQLError("You don't have permission to create sizes")
         
         name = input.get('name')
         category_id = input.get('category_id')
@@ -877,8 +981,8 @@ class UpdateSize(graphene.Mutation):
     @staticmethod
     def mutate(root, info, id, input):
         user = info.context.user
-        if not user.is_authenticated or not user.is_admin:
-            raise GraphQLError("Only admins can update sizes")
+        if not user.is_authenticated or not user.has_product_permission():
+            raise GraphQLError("You don't have permission to update sizes")
         
         try:
             size = Size.objects.get(pk=id)
@@ -911,8 +1015,8 @@ class DeleteSize(graphene.Mutation):
     @staticmethod
     def mutate(root, info, id):
         user = info.context.user
-        if not user.is_authenticated or not user.is_admin:
-            raise GraphQLError("Only admins can delete sizes")
+        if not user.is_authenticated or not user.has_product_permission():
+            raise GraphQLError("You don't have permission to delete sizes")
         
         try:
             size = Size.objects.get(pk=id)
@@ -936,8 +1040,8 @@ class CreateTopping(graphene.Mutation):
     @staticmethod
     def mutate(root, info, input):
         user = info.context.user
-        if not user.is_authenticated or not user.is_admin:
-            raise GraphQLError("Only admins can create toppings")
+        if not user.is_authenticated or not user.has_product_permission():
+            raise GraphQLError("You don't have permission to create toppings")
         
         name = input.get('name')
         
@@ -965,8 +1069,8 @@ class UpdateTopping(graphene.Mutation):
     @staticmethod
     def mutate(root, info, id, input):
         user = info.context.user
-        if not user.is_authenticated or not user.is_admin:
-            raise GraphQLError("Only admins can update toppings")
+        if not user.is_authenticated or not user.has_product_permission():
+            raise GraphQLError("You don't have permission to update toppings")
         
         try:
             topping = Topping.objects.get(pk=id)
@@ -991,8 +1095,8 @@ class DeleteTopping(graphene.Mutation):
     @staticmethod
     def mutate(root, info, id):
         user = info.context.user
-        if not user.is_authenticated or not user.is_admin:
-            raise GraphQLError("Only admins can delete toppings")
+        if not user.is_authenticated or not user.has_product_permission():
+            raise GraphQLError("You don't have permission to delete toppings")
         
         try:
             topping = Topping.objects.get(pk=id)
@@ -1016,8 +1120,8 @@ class CreateIncludedItem(graphene.Mutation):
     @staticmethod
     def mutate(root, info, input):
         user = info.context.user
-        if not user.is_authenticated or not user.is_admin:
-            raise GraphQLError("Only admins can create included items")
+        if not user.is_authenticated or not user.has_product_permission():
+            raise GraphQLError("You don't have permission to create included items")
         
         name = input.get('name')
         
@@ -1042,8 +1146,8 @@ class UpdateIncludedItem(graphene.Mutation):
     @staticmethod
     def mutate(root, info, id, input):
         user = info.context.user
-        if not user.is_authenticated or not user.is_admin:
-            raise GraphQLError("Only admins can update included items")
+        if not user.is_authenticated or not user.has_product_permission():
+            raise GraphQLError("You don't have permission to update included items")
         
         try:
             item = IncludedItem.objects.get(pk=id)
@@ -1066,8 +1170,8 @@ class DeleteIncludedItem(graphene.Mutation):
     @staticmethod
     def mutate(root, info, id):
         user = info.context.user
-        if not user.is_authenticated or not user.is_admin:
-            raise GraphQLError("Only admins can delete included items")
+        if not user.is_authenticated or not user.has_product_permission():
+            raise GraphQLError("You don't have permission to delete included items")
         
         try:
             item = IncludedItem.objects.get(pk=id)
@@ -1091,8 +1195,8 @@ class CreateIngredient(graphene.Mutation):
     @staticmethod
     def mutate(root, info, input):
         user = info.context.user
-        if not user.is_authenticated or not user.is_admin:
-            raise GraphQLError("Only admins can create ingredients")
+        if not user.is_authenticated or not user.has_product_permission():
+            raise GraphQLError("You don't have permission to create ingredients")
         
         name = input.get('name')
         
@@ -1119,8 +1223,8 @@ class UpdateIngredient(graphene.Mutation):
     @staticmethod
     def mutate(root, info, id, input):
         user = info.context.user
-        if not user.is_authenticated or not user.is_admin:
-            raise GraphQLError("Only admins can update ingredients")
+        if not user.is_authenticated or not user.has_product_permission():
+            raise GraphQLError("You don't have permission to update ingredients")
         
         try:
             ingredient = Ingredient.objects.get(pk=id)
@@ -1145,8 +1249,8 @@ class DeleteIngredient(graphene.Mutation):
     @staticmethod
     def mutate(root, info, id):
         user = info.context.user
-        if not user.is_authenticated or not user.is_admin:
-            raise GraphQLError("Only admins can delete ingredients")
+        if not user.is_authenticated or not user.has_product_permission():
+            raise GraphQLError("You don't have permission to delete ingredients")
         
         try:
             ingredient = Ingredient.objects.get(pk=id)
@@ -1211,8 +1315,8 @@ class ApproveReview(graphene.Mutation):
     @staticmethod
     def mutate(root, info, id, approve):
         user = info.context.user
-        if not user.is_authenticated or not user.is_admin:
-            raise GraphQLError("Only admins can approve reviews")
+        if not user.is_authenticated or not user.has_review_permission():
+            raise GraphQLError("You don't have permission to approve reviews")
         
         try:
             review = ProductReview.objects.get(pk=id)
@@ -1239,8 +1343,8 @@ class DeleteReview(graphene.Mutation):
     @staticmethod
     def mutate(root, info, id):
         user = info.context.user
-        if not user.is_authenticated or not user.is_admin:
-            raise GraphQLError("Only admins can delete reviews")
+        if not user.is_authenticated or not user.has_review_permission():
+            raise GraphQLError("You don't have permission to delete reviews")
         
         try:
             review = ProductReview.objects.get(pk=id)
