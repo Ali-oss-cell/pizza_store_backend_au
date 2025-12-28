@@ -1,0 +1,216 @@
+from django.db import models
+from django.core.validators import MinValueValidator
+
+
+class Category(models.Model):
+    name = models.CharField(max_length=255, unique=True)
+    slug = models.SlugField(max_length=255, unique=True, null=True, blank=True)
+    description = models.TextField(blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        verbose_name_plural = "Categories"
+        ordering = ['name']
+
+    def __str__(self):
+        return self.name
+
+
+class Tag(models.Model):
+    """Tags for categorizing products (e.g., Meat, Vegetarian, Chicken)"""
+    name = models.CharField(max_length=50, unique=True)
+    slug = models.SlugField(max_length=50, unique=True)
+    color = models.CharField(max_length=7, default='#000000')  # For UI display
+    
+    class Meta:
+        ordering = ['name']
+
+    def __str__(self):
+        return self.name
+
+
+class IncludedItem(models.Model):
+    """Items included in a combo (e.g., chips, salad with Parmas)"""
+    name = models.CharField(max_length=255)
+    
+    def __str__(self):
+        return self.name
+
+
+class Ingredient(models.Model):
+    """Base ingredients for products (e.g., Mushrooms, Mozzarella, Garlic)"""
+    name = models.CharField(max_length=100, unique=True)
+    icon = models.CharField(max_length=50, blank=True, help_text="Emoji or icon name")
+    
+    class Meta:
+        ordering = ['name']
+    
+    def __str__(self):
+        return self.name
+
+
+class Size(models.Model):
+    """Product sizes with price modifiers"""
+    name = models.CharField(max_length=50)  # Small, Medium, Large, Can, 1.25L
+    category = models.ForeignKey(
+        Category,
+        on_delete=models.CASCADE,
+        related_name='sizes',
+        help_text="Category this size belongs to"
+    )
+    price_modifier = models.DecimalField(
+        max_digits=10, 
+        decimal_places=2, 
+        default=0.00,
+        help_text="Additional price for this size (can be negative)"
+    )
+    display_order = models.PositiveIntegerField(default=0)
+    
+    class Meta:
+        ordering = ['category', 'display_order', 'name']
+        unique_together = [['name', 'category']]  # Same size name can exist for different categories
+    
+    def __str__(self):
+        return f"{self.category.name}: {self.name}"
+
+
+class Topping(models.Model):
+    """Extra toppings/add-ons"""
+    name = models.CharField(max_length=255, unique=True)
+    price = models.DecimalField(
+        max_digits=10, 
+        decimal_places=2,
+        validators=[MinValueValidator(0)]
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    def __str__(self):
+        return f"{self.name} (+${self.price})"
+
+
+class Product(models.Model):
+    name = models.CharField(max_length=255)
+    description = models.TextField(blank=True)
+    short_description = models.CharField(max_length=255, blank=True, help_text="Brief tagline for the product")
+    base_price = models.DecimalField(
+        max_digits=10, 
+        decimal_places=2,
+        validators=[MinValueValidator(0)],
+        help_text="Base price (smallest size)"
+    )
+    category = models.ForeignKey(
+        Category, 
+        on_delete=models.CASCADE,
+        related_name='products'
+    )
+    tags = models.ManyToManyField(Tag, blank=True, related_name='products')
+    image = models.ImageField(upload_to='products/', null=True, blank=True)
+    is_available = models.BooleanField(default=True)
+    is_featured = models.BooleanField(default=False, help_text="Show on homepage/featured section")
+    is_combo = models.BooleanField(default=False, help_text="Does this include other items?")
+    included_items = models.ManyToManyField(IncludedItem, blank=True, related_name='products')
+    
+    # Ingredients (base ingredients shown in product detail)
+    ingredients = models.ManyToManyField(
+        Ingredient, 
+        blank=True, 
+        related_name='products',
+        help_text="Base ingredients for this product"
+    )
+    
+    # Preparation time
+    prep_time_min = models.PositiveIntegerField(
+        default=15,
+        help_text="Minimum preparation time in minutes"
+    )
+    prep_time_max = models.PositiveIntegerField(
+        default=20,
+        help_text="Maximum preparation time in minutes"
+    )
+    
+    # Ratings (calculated from reviews)
+    average_rating = models.DecimalField(
+        max_digits=3, 
+        decimal_places=2, 
+        default=0.00,
+        validators=[MinValueValidator(0)]
+    )
+    rating_count = models.PositiveIntegerField(default=0)
+    
+    # Calories (optional nutritional info)
+    calories = models.PositiveIntegerField(null=True, blank=True, help_text="Calories per serving")
+    
+    available_sizes = models.ManyToManyField(
+        Size, 
+        blank=True,
+        related_name='products',
+        help_text="Sizes available for this product"
+    )
+    available_toppings = models.ManyToManyField(
+        Topping, 
+        blank=True,
+        related_name='products',
+        help_text="Toppings that can be added to this product"
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['category', 'name']
+
+    def __str__(self):
+        return f"{self.name} ({self.category.name})"
+    
+    @property
+    def prep_time_display(self):
+        """Return formatted prep time string"""
+        return f"{self.prep_time_min}-{self.prep_time_max} min"
+    
+    def get_price_for_size(self, size):
+        """Calculate price for a specific size"""
+        if size in self.available_sizes.all():
+            return self.base_price + size.price_modifier
+        return self.base_price
+    
+    def update_rating(self):
+        """Recalculate average rating from reviews"""
+        from django.db.models import Avg
+        reviews = self.reviews.all()
+        if reviews.exists():
+            self.average_rating = reviews.aggregate(Avg('rating'))['rating__avg'] or 0
+            self.rating_count = reviews.count()
+        else:
+            self.average_rating = 0
+            self.rating_count = 0
+        self.save()
+
+
+class ProductReview(models.Model):
+    """Customer reviews for products"""
+    product = models.ForeignKey(Product, on_delete=models.CASCADE, related_name='reviews')
+    customer_name = models.CharField(max_length=100)
+    customer_email = models.EmailField()
+    rating = models.PositiveIntegerField(
+        validators=[MinValueValidator(1)],
+        help_text="Rating from 1 to 5"
+    )
+    comment = models.TextField(blank=True)
+    is_approved = models.BooleanField(default=False, help_text="Approved by admin to display")
+    created_at = models.DateTimeField(auto_now_add=True)
+    
+    class Meta:
+        ordering = ['-created_at']
+
+    def __str__(self):
+        return f"{self.customer_name} - {self.product.name} ({self.rating}★)"
+    
+    def save(self, *args, **kwargs):
+        # Validate rating is between 1-5
+        if self.rating > 5:
+            self.rating = 5
+        super().save(*args, **kwargs)
+        # Update product rating when review is saved
+        if self.is_approved:
+            self.product.update_rating()
