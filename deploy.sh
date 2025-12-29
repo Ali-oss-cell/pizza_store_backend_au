@@ -306,26 +306,78 @@ setup_env_file() {
         fi
     fi
     
-    print_info "Copying environment template..."
-    cp env.production.template .env
+    print_info "Creating .env file..."
+    
+    # Get droplet IP
+    DROPLET_IP=$(curl -s ifconfig.me || hostname -I | awk '{print $1}')
     
     print_info "Generating Django secret key..."
     source venv/bin/activate
     SECRET_KEY=$(python -c "from django.core.management.utils import get_random_secret_key; print(get_random_secret_key())")
     
-    # Update secret key in .env
-    sed -i "s/DJANGO_SECRET_KEY=.*/DJANGO_SECRET_KEY=${SECRET_KEY}/" .env
+    # Create .env file with all values
+    cat > .env << EOF
+# Django Production Environment Variables
+# DO NOT commit this file to git!
+
+# ============================================
+# SECURITY SETTINGS
+# ============================================
+
+# Secret Key - Auto-generated
+DJANGO_SECRET_KEY=${SECRET_KEY}
+
+# Debug Mode - MUST be False in production
+DEBUG=False
+
+# Allowed Hosts - Comma-separated list of domains/IPs
+ALLOWED_HOSTS=api.marinapizzas.com.au,marinapizzas.com.au,www.marinapizzas.com.au,${DROPLET_IP}
+
+# ============================================
+# DATABASE CONFIGURATION (DigitalOcean Managed PostgreSQL)
+# ============================================
+
+DB_NAME=defaultdb
+DB_USER=doadmin
+DB_PASSWORD=AVNS_1GHB72K7lqTFT0MS372
+DB_HOST=private-db-postgresql-syd1-42296-do-user-26523274-0.e.db.ondigitalocean.com
+DB_PORT=25060
+
+# SSL Mode for PostgreSQL (required for DigitalOcean managed databases)
+DB_SSLMODE=require
+
+# ============================================
+# CORS CONFIGURATION
+# ============================================
+
+# CORS Allowed Origins - Comma-separated list of frontend URLs
+CORS_ALLOWED_ORIGINS=https://marinapizzas.com.au,https://www.marinapizzas.com.au
+
+# CSRF Trusted Origins - Comma-separated list of trusted domains
+CSRF_TRUSTED_ORIGINS=https://marinapizzas.com.au,https://www.marinapizzas.com.au,https://api.marinapizzas.com.au
+
+# ============================================
+# SSL/SECURITY SETTINGS (only used when DEBUG=False)
+# ============================================
+
+# Redirect HTTP to HTTPS
+SECURE_SSL_REDIRECT=True
+
+# HSTS (HTTP Strict Transport Security) - 1 year
+SECURE_HSTS_SECONDS=31536000
+EOF
+
+    # Protect the file
+    chmod 600 .env
     
-    print_warning "IMPORTANT: Edit .env file to update:"
-    print_info "1. Add your droplet IP to ALLOWED_HOSTS"
-    print_info "2. Verify database credentials"
-    print_info "3. Update domain names if needed"
+    print_success ".env file created with:"
+    print_info "  - Auto-generated SECRET_KEY"
+    print_info "  - Droplet IP: ${DROPLET_IP}"
+    print_info "  - Database credentials configured"
+    print_info "  - Domain names configured"
     
-    print_info ""
-    print_info "Edit .env file now: nano ${APP_DIR}/.env"
-    print_info ""
-    
-    read -p "Press Enter after editing .env file..."
+    print_warning "Verify database password is correct in .env file"
+    read -p "Press Enter to continue (or Ctrl+C to edit .env first)..."
     
     print_success "Environment file configured"
 }
