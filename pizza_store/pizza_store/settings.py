@@ -11,21 +11,31 @@ https://docs.djangoproject.com/en/6.0/ref/settings/
 """
 
 from pathlib import Path
+import os
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
 
+# Load environment variables from .env file if it exists
+try:
+    from dotenv import load_dotenv
+    load_dotenv(BASE_DIR.parent / '.env')
+except ImportError:
+    pass  # python-dotenv not installed, skip
 
 # Quick-start development settings - unsuitable for production
 # See https://docs.djangoproject.com/en/6.0/howto/deployment/checklist/
 
 # SECURITY WARNING: keep the secret key used in production secret!
-SECRET_KEY = 'django-insecure-mn2uchzr%e)k!czpve5ttjk4@dcbpnwef73@kefmee7_-*dg@1'
+# Use environment variable in production, fallback to dev key for local development
+SECRET_KEY = os.getenv('DJANGO_SECRET_KEY', 'django-insecure-mn2uchzr%e)k!czpve5ttjk4@dcbpnwef73@kefmee7_-*dg@1')
 
 # SECURITY WARNING: don't run with debug turned on in production!
-DEBUG = True
+DEBUG = os.getenv('DEBUG', 'True') == 'True'
 
-ALLOWED_HOSTS = ['localhost', '127.0.0.1', '0.0.0.0']
+# ALLOWED_HOSTS - Use environment variable in production
+ALLOWED_HOSTS_STR = os.getenv('ALLOWED_HOSTS', 'localhost,127.0.0.1,0.0.0.0')
+ALLOWED_HOSTS = [host.strip() for host in ALLOWED_HOSTS_STR.split(',')]
 
 
 # Application definition
@@ -92,12 +102,25 @@ WSGI_APPLICATION = 'pizza_store.wsgi.application'
 # Database
 # https://docs.djangoproject.com/en/6.0/ref/settings/#databases
 
-DATABASES = {
-    'default': {
-        'ENGINE': 'django.db.backends.sqlite3',
-        'NAME': BASE_DIR / 'db.sqlite3',
+# Use PostgreSQL in production if DB_NAME is set, otherwise use SQLite for development
+if os.getenv('DB_NAME'):
+    DATABASES = {
+        'default': {
+            'ENGINE': 'django.db.backends.postgresql',
+            'NAME': os.getenv('DB_NAME'),
+            'USER': os.getenv('DB_USER', 'postgres'),
+            'PASSWORD': os.getenv('DB_PASSWORD', ''),
+            'HOST': os.getenv('DB_HOST', 'localhost'),
+            'PORT': os.getenv('DB_PORT', '5432'),
+        }
     }
-}
+else:
+    DATABASES = {
+        'default': {
+            'ENGINE': 'django.db.backends.sqlite3',
+            'NAME': BASE_DIR / 'db.sqlite3',
+        }
+    }
 
 
 # Password validation
@@ -136,7 +159,8 @@ AUTH_USER_MODEL = 'accounts.User'
 # Static files (CSS, JavaScript, Images)
 # https://docs.djangoproject.com/en/6.0/howto/static-files/
 
-STATIC_URL = 'static/'
+STATIC_URL = '/static/'
+STATIC_ROOT = BASE_DIR / 'staticfiles'  # For production: python manage.py collectstatic
 
 # Session configuration for guest cart
 # Sessions are used to store cart data for users who don't log in
@@ -144,16 +168,22 @@ SESSION_ENGINE = 'django.contrib.sessions.backends.db'  # Store sessions in data
 SESSION_COOKIE_AGE = 86400  # 24 hours (cart expires after 24h of inactivity)
 SESSION_SAVE_EVERY_REQUEST = True  # Extend session on each request
 
-# CORS Configuration for local development
-# Allow React frontend (typically runs on http://localhost:3000) to access the API
-CORS_ALLOWED_ORIGINS = [
-    "http://localhost:3000",  # React default port
-    "http://127.0.0.1:3000",
-    "http://localhost:5173",  # Vite default port
-    "http://127.0.0.1:5173",
-    "http://localhost:8080",  # Vue default port
-    "http://127.0.0.1:8080",
-]
+# CORS Configuration
+# Allow React frontend to access the API
+# In production, set CORS_ALLOWED_ORIGINS env var (comma-separated URLs)
+CORS_ALLOWED_ORIGINS_STR = os.getenv('CORS_ALLOWED_ORIGINS', '')
+if CORS_ALLOWED_ORIGINS_STR:
+    CORS_ALLOWED_ORIGINS = [origin.strip() for origin in CORS_ALLOWED_ORIGINS_STR.split(',')]
+else:
+    # Default to localhost for development
+    CORS_ALLOWED_ORIGINS = [
+        "http://localhost:3000",  # React default port
+        "http://127.0.0.1:3000",
+        "http://localhost:5173",  # Vite default port
+        "http://127.0.0.1:5173",
+        "http://localhost:8080",  # Vue default port
+        "http://127.0.0.1:8080",
+    ]
 
 # Allow credentials (cookies, authorization headers) to be sent
 CORS_ALLOW_CREDENTIALS = True
@@ -171,15 +201,21 @@ CORS_ALLOW_HEADERS = [
     'x-requested-with',
 ]
 
-# CSRF Configuration for local development
-CSRF_TRUSTED_ORIGINS = [
-    "http://localhost:3000",
-    "http://127.0.0.1:3000",
-    "http://localhost:5173",
-    "http://127.0.0.1:5173",
-    "http://localhost:8080",
-    "http://127.0.0.1:8080",
-]
+# CSRF Configuration
+# In production, set CSRF_TRUSTED_ORIGINS env var (comma-separated URLs)
+CSRF_TRUSTED_ORIGINS_STR = os.getenv('CSRF_TRUSTED_ORIGINS', '')
+if CSRF_TRUSTED_ORIGINS_STR:
+    CSRF_TRUSTED_ORIGINS = [origin.strip() for origin in CSRF_TRUSTED_ORIGINS_STR.split(',')]
+else:
+    # Default to localhost for development
+    CSRF_TRUSTED_ORIGINS = [
+        "http://localhost:3000",
+        "http://127.0.0.1:3000",
+        "http://localhost:5173",
+        "http://127.0.0.1:5173",
+        "http://localhost:8080",
+        "http://127.0.0.1:8080",
+    ]
 
 # Allow cookies to be sent cross-origin (for session-based cart)
 CSRF_COOKIE_SAMESITE = 'Lax'
@@ -188,3 +224,21 @@ SESSION_COOKIE_SAMESITE = 'Lax'
 # Media files (user uploads - product images, etc.)
 MEDIA_URL = '/media/'
 MEDIA_ROOT = BASE_DIR / 'media'
+
+# Production Security Settings
+# These are only applied when DEBUG=False (production mode)
+if not DEBUG:
+    # HTTPS Security
+    SECURE_SSL_REDIRECT = os.getenv('SECURE_SSL_REDIRECT', 'True') == 'True'
+    SESSION_COOKIE_SECURE = True
+    CSRF_COOKIE_SECURE = True
+    
+    # HSTS (HTTP Strict Transport Security)
+    SECURE_HSTS_SECONDS = int(os.getenv('SECURE_HSTS_SECONDS', '31536000'))  # 1 year
+    SECURE_HSTS_INCLUDE_SUBDOMAINS = True
+    SECURE_HSTS_PRELOAD = True
+    
+    # Additional security headers
+    SECURE_BROWSER_XSS_FILTER = True
+    SECURE_CONTENT_TYPE_NOSNIFF = True
+    X_FRAME_OPTIONS = 'DENY'

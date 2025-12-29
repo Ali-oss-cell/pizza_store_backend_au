@@ -102,3 +102,4 @@ class UserAdmin(BaseUserAdmin):
             ', '.join(permissions)
         )
     permissions_summary.short_description = 'Permissions'
+    

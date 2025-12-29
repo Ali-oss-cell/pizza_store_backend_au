@@ -23,6 +23,18 @@ class CartItem(models.Model):
     quantity = models.PositiveIntegerField(default=1)
     selected_toppings = models.JSONField(default=list)  # Store toppings as list of dicts
     unit_price = models.DecimalField(max_digits=10, decimal_places=2)  # Snapshot price
+    
+    # Combo option: allows customer to choose if they want included items
+    include_combo_items = models.BooleanField(
+        default=False,
+        help_text="If True, includes combo items (chips, salad, etc.) with this product"
+    )
+    # Snapshot of included items at time of adding to cart
+    selected_included_items = models.JSONField(
+        default=list,
+        help_text="Snapshot of included item names when combo option is selected"
+    )
+    
     created_at = models.DateTimeField(auto_now_add=True)
     
     class Meta:
@@ -36,5 +48,11 @@ class CartItem(models.Model):
         )
         return (self.unit_price + toppings_total) * Decimal(self.quantity)
     
+    @property
+    def is_combo_order(self):
+        """Check if this cart item includes combo items"""
+        return self.include_combo_items and self.product.is_combo
+    
     def __str__(self):
-        return f"{self.quantity}x {self.product.name} - ${self.get_subtotal()}"
+        combo_label = " (Combo)" if self.is_combo_order else ""
+        return f"{self.quantity}x {self.product.name}{combo_label} - ${self.get_subtotal()}"

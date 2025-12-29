@@ -93,6 +93,7 @@ class Topping(models.Model):
 
 class Product(models.Model):
     name = models.CharField(max_length=255)
+    slug = models.SlugField(max_length=255, unique=True, null=True, blank=True, help_text="URL-friendly identifier")
     description = models.TextField(blank=True)
     short_description = models.CharField(max_length=255, blank=True, help_text="Brief tagline for the product")
     base_price = models.DecimalField(

@@ -185,7 +185,7 @@ class ProductType(DjangoObjectType):
     class Meta:
         model = Product
         fields = (
-            'id', 'name', 'short_description', 'description', 'base_price', 
+            'id', 'name', 'slug', 'short_description', 'description', 'base_price', 
             'sale_price', 'sale_start_date', 'sale_end_date',
             'category', 'tags', 'image', 'is_available', 'is_featured',
             'is_combo', 'included_items', 'ingredients',

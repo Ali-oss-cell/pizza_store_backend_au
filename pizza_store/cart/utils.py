@@ -112,3 +112,83 @@ def format_toppings_for_storage(toppings_input):
                 continue
     
     return formatted_toppings
+
+
+def toppings_match(toppings1, toppings2):
+    """
+    Compare two toppings lists to see if they match
+    Args:
+        toppings1: List of topping dicts
+        toppings2: List of topping dicts
+    Returns: Boolean
+    """
+    if not toppings1 and not toppings2:
+        return True
+    
+    if not toppings1 or not toppings2:
+        return False
+    
+    # Sort by ID for comparison
+    ids1 = sorted([str(t.get('id', '')) for t in toppings1])
+    ids2 = sorted([str(t.get('id', '')) for t in toppings2])
+    
+    return ids1 == ids2
+
+
+def find_matching_cart_item(cart, product, size=None, toppings=None, include_combo_items=False):
+    """
+    Find an existing cart item that matches the given product, size, toppings, and combo option
+    Args:
+        cart: Cart object
+        product: Product object
+        size: Size object (optional)
+        toppings: List of topping dicts (optional)
+        include_combo_items: Boolean - whether combo items are included (optional)
+    Returns: CartItem or None
+    """
+    # Get all items for this product
+    items = cart.items.filter(product=product)
+    
+    # Normalize toppings for comparison
+    normalized_toppings = format_toppings_for_storage(toppings) if toppings else []
+    
+    for item in items:
+        # Compare size
+        item_size_id = item.size.id if item.size else None
+        new_size_id = size.id if size else None
+        
+        if item_size_id != new_size_id:
+            continue
+        
+        # Compare toppings
+        item_toppings = item.selected_toppings if item.selected_toppings else []
+        if not toppings_match(item_toppings, normalized_toppings):
+            continue
+        
+        # Compare combo option (only matters for combo products)
+        if product.is_combo:
+            if item.include_combo_items != include_combo_items:
+                continue
+        
+        return item
+    
+    return None
+
+
+def format_included_items_for_storage(product):
+    """
+    Format included items for JSON storage (snapshot)
+    Args:
+        product: Product object
+    Returns: List of dicts with 'id', 'name'
+    """
+    if not product.is_combo:
+        return []
+    
+    return [
+        {
+            'id': str(item.id),
+            'name': item.name
+        }
+        for item in product.included_items.all()
+    ]
