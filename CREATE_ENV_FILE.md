@@ -199,7 +199,7 @@ cat /var/www/pizza-store-backend/.env
 |----------|-------------|
 | `DJANGO_SECRET_KEY` | Generate new one (see Method 3) |
 | `ALLOWED_HOSTS` | Add your droplet IP: `170.64.219.198` |
-| `DB_PASSWORD` | Your database password: `AVNS_1GHB72K7lqTFT0MS372` |
+| `DB_PASSWORD` | Your database password (from DigitalOcean dashboard) |
 | `DEBUG` | Must be `False` |
 
 All other values are already correct! ✅

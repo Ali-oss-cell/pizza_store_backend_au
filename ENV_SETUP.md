@@ -69,7 +69,7 @@ Your DigitalOcean managed PostgreSQL is already configured in the template:
 ```
 DB_NAME=defaultdb
 DB_USER=doadmin
-DB_PASSWORD=AVNS_1GHB72K7lqTFT0MS372
+DB_PASSWORD=your-database-password-here
 DB_HOST=private-db-postgresql-syd1-42296-do-user-26523274-0.e.db.ondigitalocean.com
 DB_PORT=25060
 DB_SSLMODE=require
@@ -113,7 +113,7 @@ ALLOWED_HOSTS=pizzastore.com,www.pizzastore.com,123.45.67.89
 # Database (DigitalOcean Managed PostgreSQL)
 DB_NAME=defaultdb
 DB_USER=doadmin
-DB_PASSWORD=AVNS_1GHB72K7lqTFT0MS372
+DB_PASSWORD=your-database-password-here
 DB_HOST=private-db-postgresql-syd1-42296-do-user-26523274-0.e.db.ondigitalocean.com
 DB_PORT=25060
 DB_SSLMODE=require

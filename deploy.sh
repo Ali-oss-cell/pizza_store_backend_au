@@ -339,7 +339,7 @@ ALLOWED_HOSTS=api.marinapizzas.com.au,marinapizzas.com.au,www.marinapizzas.com.a
 
 DB_NAME=defaultdb
 DB_USER=doadmin
-DB_PASSWORD=AVNS_1GHB72K7lqTFT0MS372
+DB_PASSWORD=your-database-password-here
 DB_HOST=private-db-postgresql-syd1-42296-do-user-26523274-0.e.db.ondigitalocean.com
 DB_PORT=25060
 
