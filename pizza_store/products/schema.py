@@ -181,6 +181,11 @@ class ProductType(DjangoObjectType):
     is_on_sale = graphene.Boolean()
     current_price = graphene.Decimal(description="Current price (sale price if on sale, otherwise base price)")
     discount_percentage = graphene.Int(description="Discount percentage when on sale")
+    # Inventory fields
+    stock_quantity = graphene.Int(description="Current stock quantity (null if not tracking inventory)")
+    is_in_stock = graphene.Boolean(description="Whether product is in stock")
+    is_low_stock = graphene.Boolean(description="Whether product has low stock")
+    stock_item = graphene.Field('inventory.schema.StockItemType', description="Stock item details")
     
     class Meta:
         model = Product
@@ -191,6 +196,7 @@ class ProductType(DjangoObjectType):
             'is_combo', 'included_items', 'ingredients',
             'prep_time_min', 'prep_time_max', 'average_rating', 'rating_count',
             'calories', 'available_sizes', 'available_toppings',
+            'barcode', 'sku', 'track_inventory', 'reorder_level',
             'created_at', 'updated_at'
         )
     
@@ -213,6 +219,25 @@ class ProductType(DjangoObjectType):
             if request:
                 return request.build_absolute_uri(self.image.url)
             return self.image.url
+        return None
+    
+    def resolve_stock_quantity(self, info):
+        """Get current stock quantity"""
+        return self.stock_quantity
+    
+    def resolve_is_in_stock(self, info):
+        """Check if product is in stock"""
+        return self.is_in_stock
+    
+    def resolve_is_low_stock(self, info):
+        """Check if product has low stock"""
+        return self.is_low_stock
+    
+    def resolve_stock_item(self, info):
+        """Get stock item if tracking inventory"""
+        if self.track_inventory:
+            from inventory.utils import get_or_create_stock_item
+            return get_or_create_stock_item(self)
         return None
     
     def resolve_tags(self, info):

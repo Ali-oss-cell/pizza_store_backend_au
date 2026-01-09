@@ -163,6 +163,31 @@ class Product(models.Model):
     # Calories (optional nutritional info)
     calories = models.PositiveIntegerField(null=True, blank=True, help_text="Calories per serving")
     
+    # Inventory fields
+    barcode = models.CharField(
+        max_length=50, 
+        unique=True, 
+        null=True, 
+        blank=True,
+        help_text="Product barcode (EAN-13, UPC-A, etc.)"
+    )
+    sku = models.CharField(
+        max_length=50, 
+        unique=True, 
+        null=True, 
+        blank=True,
+        help_text="Stock Keeping Unit (SKU) - unique product identifier"
+    )
+    track_inventory = models.BooleanField(
+        default=False, 
+        help_text="Track stock quantity for this product"
+    )
+    reorder_level = models.PositiveIntegerField(
+        default=10,
+        validators=[MinValueValidator(0)],
+        help_text="Alert when stock falls below this level (if tracking inventory)"
+    )
+    
     available_sizes = models.ManyToManyField(
         Size, 
         blank=True,
@@ -242,6 +267,36 @@ class Product(models.Model):
             self.average_rating = 0
             self.rating_count = 0
         self.save()
+    
+    @property
+    def stock_quantity(self):
+        """Get current stock quantity (0 if not tracking inventory)"""
+        if not self.track_inventory:
+            return None
+        try:
+            return self.stock.quantity
+        except:
+            return 0
+    
+    @property
+    def is_in_stock(self):
+        """Check if product is in stock"""
+        if not self.track_inventory:
+            return True  # If not tracking, assume in stock
+        try:
+            return self.stock.quantity > 0
+        except:
+            return True  # If no stock item exists yet, assume in stock
+    
+    @property
+    def is_low_stock(self):
+        """Check if product has low stock"""
+        if not self.track_inventory:
+            return False
+        try:
+            return self.stock.is_low_stock
+        except:
+            return False
 
 
 class ProductReview(models.Model):

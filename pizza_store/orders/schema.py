@@ -336,6 +336,23 @@ class CreateOrder(graphene.Mutation):
                 subtotal=item_subtotal
             )
             order_items.append(order_item)
+            
+            # Deduct stock if product tracks inventory
+            if cart_item.product.track_inventory:
+                try:
+                    from inventory.utils import sell_stock
+                    user = info.context.user if info.context.user.is_authenticated else None
+                    sell_stock(
+                        product=cart_item.product,
+                        quantity=cart_item.quantity,
+                        order_number=order_number,
+                        user=user
+                    )
+                except Exception as e:
+                    # Log error but don't fail order creation
+                    import logging
+                    logger = logging.getLogger(__name__)
+                    logger.error(f"Failed to deduct stock for product {cart_item.product.id}: {str(e)}")
         
         # Apply promotion code if provided (now with order items for product-specific discounts)
         discount_amount = Decimal('0.00')

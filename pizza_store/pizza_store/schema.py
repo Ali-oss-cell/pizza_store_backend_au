@@ -10,6 +10,8 @@ from products.schema import ProductsQuery, ProductsMutation
 from cart.schema import CartQuery, CartMutation
 from orders.schema import OrdersQuery, OrdersMutation
 from team.schema import TeamQuery, TeamMutation
+from inventory.schema import InventoryQuery, InventoryMutations
+from inventory.pos_schema import POSQuery, POSMutations
 # from payments.schema import PaymentsQuery, PaymentsMutation
 
 
@@ -19,6 +21,8 @@ class Query(
     CartQuery,
     OrdersQuery,
     TeamQuery,
+    InventoryQuery,
+    POSQuery,
     # PaymentsQuery,
     graphene.ObjectType,
 ):
@@ -32,6 +36,8 @@ class Mutation(
     CartMutation,
     OrdersMutation,
     TeamMutation,
+    InventoryMutations,
+    POSMutations,
     # PaymentsMutation,
     graphene.ObjectType,
 ):
