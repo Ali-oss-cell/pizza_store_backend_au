@@ -72,6 +72,13 @@ class RegisterInput(graphene.InputObjectType):
     last_name = graphene.String()
     phone = graphene.String()
     role = graphene.String()  # Only admins can set role
+    # Staff permissions (only for staff role)
+    can_manage_orders = graphene.Boolean(default_value=True, description="Can view and update order status")
+    can_manage_products = graphene.Boolean(default_value=False, description="Can create, update, delete products")
+    can_manage_categories = graphene.Boolean(default_value=False, description="Can create, update, delete categories")
+    can_manage_promotions = graphene.Boolean(default_value=False, description="Can create, update, delete promotions")
+    can_view_reports = graphene.Boolean(default_value=False, description="Can view sales reports")
+    can_manage_reviews = graphene.Boolean(default_value=False, description="Can approve or reject reviews")
 
 
 class TeamMemberInput(graphene.InputObjectType):
@@ -286,6 +293,9 @@ class Register(graphene.Mutation):
         if role not in [User.Role.ADMIN, User.Role.STAFF]:
             raise GraphQLError("Invalid role. Must be 'admin' or 'staff'")
         
+        # Get phone number
+        phone = input.get('phone', '')
+        
         # Create user
         user = User.objects.create_user(
             username=username,
@@ -293,13 +303,24 @@ class Register(graphene.Mutation):
             password=password,
             first_name=first_name,
             last_name=last_name,
+            phone=phone,
             role=role
         )
+        
+        # Set permissions for staff users
+        if role == User.Role.STAFF:
+            user.can_manage_orders = input.get('can_manage_orders', True)
+            user.can_manage_products = input.get('can_manage_products', False)
+            user.can_manage_categories = input.get('can_manage_categories', False)
+            user.can_manage_promotions = input.get('can_manage_promotions', False)
+            user.can_view_reports = input.get('can_view_reports', False)
+            user.can_manage_reviews = input.get('can_manage_reviews', False)
+            user.save()
         
         return Register(
             user=user,
             success=True,
-            message="User created successfully"
+            message=f"{'Admin' if role == User.Role.ADMIN else 'Staff'} user created successfully"
         )
 
 
