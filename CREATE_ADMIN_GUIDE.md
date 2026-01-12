@@ -5,7 +5,9 @@
 ### **Simple (Interactive - will prompt for password):**
 
 ```bash
-cd /var/www/pizza-store-backend/pizza_store
+cd /var/www/pizza-store-backend
+git pull origin main
+cd pizza_store
 source ../venv/bin/activate
 python manage.py create_admin
 ```
@@ -13,7 +15,9 @@ python manage.py create_admin
 ### **With All Options:**
 
 ```bash
-cd /var/www/pizza-store-backend/pizza_store
+cd /var/www/pizza-store-backend
+git pull origin main
+cd pizza_store
 source ../venv/bin/activate
 python manage.py create_admin \
   --username admin \
@@ -73,19 +77,26 @@ python manage.py create_admin \
 ssh root@your-droplet-ip
 ```
 
-### **2. Navigate to project:**
+### **2. Navigate to project and pull latest changes:**
 
 ```bash
-cd /var/www/pizza-store-backend/pizza_store
+cd /var/www/pizza-store-backend
+git pull origin main
 ```
 
-### **3. Activate virtual environment:**
+### **3. Navigate to Django project:**
+
+```bash
+cd pizza_store
+```
+
+### **4. Activate virtual environment:**
 
 ```bash
 source ../venv/bin/activate
 ```
 
-### **4. Create admin account:**
+### **5. Create admin account:**
 
 ```bash
 python manage.py create_admin \
@@ -216,7 +227,7 @@ source /var/www/pizza-store-backend/venv/bin/activate
 
 **One-liner for droplet:**
 ```bash
-cd /var/www/pizza-store-backend/pizza_store && source ../venv/bin/activate && python manage.py create_admin --username admin --email admin@marinapizzas.com.au --password "YourPassword123!"
+cd /var/www/pizza-store-backend && git pull origin main && cd pizza_store && source ../venv/bin/activate && python manage.py create_admin --username admin --email admin@marinapizzas.com.au --password "YourPassword123!"
 ```
 
 **Update existing admin:**
